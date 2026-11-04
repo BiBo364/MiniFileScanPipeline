@@ -33,23 +33,32 @@ export function registerScanRoutes(
       return reply.code(413).send({ error: 'File exceeds the 10 MB upload limit' });
     }
 
+    let savedScan: Awaited<ReturnType<typeof insertQueuedScan>>;
     try {
-      await insertQueuedScan(deps.pool, {
+      savedScan = await insertQueuedScan(deps.pool, {
         id: scanId,
         sha256: saved.sha256,
         storedPath: filePath,
         originalFilename,
       });
-
-      await deps.rabbit.publishScanJob({
-        scanId,
-        sha256: saved.sha256,
-        filePath,
-      });
     } catch (error) {
       await unlink(filePath).catch(() => undefined);
       throw error;
     }
+
+    if (!savedScan.inserted) {
+      await unlink(filePath).catch(() => undefined);
+      request.log
+        .child({ scanId: savedScan.scan.id })
+        .info({ sha256: saved.sha256 }, 'duplicate upload reused existing scan');
+      return reply.code(202).send({ scanId: savedScan.scan.id });
+    }
+
+    await deps.rabbit.publishScanJob({
+      scanId: savedScan.scan.id,
+      sha256: saved.sha256,
+      filePath,
+    });
 
     log.info({ sha256: saved.sha256 }, 'scan queued');
     return reply.code(202).send({ scanId });

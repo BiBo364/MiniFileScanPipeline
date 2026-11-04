@@ -21,6 +21,7 @@ export async function connectRabbitMq(url: string): Promise<RabbitMqPublisher> {
       const sent = channel.sendToQueue(QUEUE_NAMES.SCAN_JOBS, Buffer.from(JSON.stringify(message)), {
         persistent: true,
         contentType: 'application/json',
+        headers: { 'x-scan-attempt': 1 },
       });
 
       if (!sent) {
