@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: mini-scan-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-scans}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scans}
@@ -19,6 +20,7 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     container_name: mini-scan-rabbitmq
+    restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-miniscan}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-miniscan}
@@ -35,6 +37,7 @@ services:
     build:
       context: .
       dockerfile: services/api/Dockerfile
+    restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -49,6 +52,7 @@ services:
       DANGEROUS_FILE_EXTENSIONS: ${DANGEROUS_FILE_EXTENSIONS:-.exe,.dll,.bat,.cmd,.com,.scr,.js,.vbs,.ps1}
       SCAN_MAX_ATTEMPTS: ${SCAN_MAX_ATTEMPTS:-3}
       SCAN_RETRY_BASE_DELAY_MS: ${SCAN_RETRY_BASE_DELAY_MS:-1000}
+      OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
     ports:
       - '${HOST_API_PORT:-3000}:3000'
     volumes:
@@ -74,6 +78,7 @@ services:
     build:
       context: .
       dockerfile: services/worker/Dockerfile
+    restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}

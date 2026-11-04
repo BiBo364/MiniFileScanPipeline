@@ -9,6 +9,7 @@ import { Pool } from 'pg';
 import { buildApp } from '../../services/api/src/app';
 import { runMigrations } from '../../services/api/src/migrate';
 import { connectRabbitMq } from '../../services/api/src/rabbitmq';
+import { startOutboxDispatcher } from '../../services/api/src/outbox';
 
 jest.setTimeout(30_000);
 
@@ -20,6 +21,7 @@ describe('scan upload integration', () => {
   let worker: ChildProcessWithoutNullStreams;
   let apiUrl: string;
   let rabbitUrl: string;
+  let outbox: ReturnType<typeof startOutboxDispatcher>;
 
   beforeAll(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'mini-scan-integration-'));
@@ -29,13 +31,20 @@ describe('scan upload integration', () => {
       RABBITMQ_URL: process.env.RABBITMQ_URL ?? 'amqp://miniscan:miniscan@localhost:5672',
       LOG_LEVEL: 'fatal',
       FILE_STORAGE_PATH: tempDir,
-      SCAN_RETRY_BASE_DELAY_MS: '100',
+      SCAN_RETRY_BASE_DELAY_MS: '1000',
     });
     rabbitUrl = config.RABBITMQ_URL;
     pool = new Pool({ connectionString: config.DATABASE_URL });
     await runMigrations(pool);
     rabbit = await connectRabbitMq(config.RABBITMQ_URL);
     app = await buildApp({ config, pool, rabbit });
+    outbox = startOutboxDispatcher({
+      pool,
+      rabbit,
+      pollIntervalMs: 20,
+      onPublished: () => undefined,
+      onError: (_scanId, error) => console.error('integration outbox error', error),
+    });
     apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
 
     worker = spawn(process.execPath, [path.resolve('services/worker/dist/index.js')], {
@@ -46,7 +55,7 @@ describe('scan upload integration', () => {
         RABBITMQ_URL: config.RABBITMQ_URL,
         LOG_LEVEL: 'info',
         FILE_STORAGE_PATH: tempDir,
-        SCAN_RETRY_BASE_DELAY_MS: '100',
+        SCAN_RETRY_BASE_DELAY_MS: '1000',
       },
       stdio: 'pipe',
     });
@@ -59,6 +68,7 @@ describe('scan upload integration', () => {
       worker.kill('SIGTERM');
       await exited;
     }
+    if (outbox) await outbox.stop();
     if (app) await app.close();
     if (rabbit) await rabbit.close();
     if (pool) await pool.end();
@@ -73,6 +83,16 @@ describe('scan upload integration', () => {
     const completed = await waitForScan(firstBody.scanId);
     expect(completed.status).toBe('Clean');
     expect(completed.result.sha256).toBeTruthy();
+    let outboxPublishedAt: Date | null | undefined;
+    await waitFor(async () => {
+      const outboxState = await pool.query<{ published_at: Date | null }>(
+        'SELECT published_at FROM scan_outbox WHERE scan_id = $1 AND event_type = $2',
+        [firstBody.scanId, 'scan.queued'],
+      );
+      outboxPublishedAt = outboxState.rows[0]?.published_at;
+      return outboxPublishedAt instanceof Date;
+    });
+    expect(outboxPublishedAt).toBeInstanceOf(Date);
 
     const second = await upload(content);
     expect(second.status).toBe(202);
