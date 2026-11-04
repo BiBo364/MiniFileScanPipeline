@@ -9,14 +9,20 @@
     "build": "npm run build -w @mini-scan/shared && npm run build -w @mini-scan/api && npm run build -w @mini-scan/worker",
     "start": "npm start -w @mini-scan/api",
     "start:worker": "npm start -w @mini-scan/worker",
+    "test:unit": "jest --config jest.config.cjs --runInBand",
+    "test:coverage": "jest --config jest.config.cjs --runInBand --coverage",
+    "test:integration": "docker compose up -d --wait postgres rabbitmq && jest --config jest.integration.config.cjs --runInBand",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",
+    "@types/jest": "^30.0.0",
     "eslint": "^9.15.0",
+    "jest": "^30.5.2",
     "prettier": "^3.4.1",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.16.0"
   },

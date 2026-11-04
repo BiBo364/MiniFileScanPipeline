@@ -34,9 +34,16 @@ export async function claimQueuedScan(
       return null;
     }
 
-    await client.query("UPDATE scans SET status = 'Scanning', updated_at = NOW() WHERE id = $1", [scanId]);
+    await client.query("UPDATE scans SET status = 'Scanning', updated_at = NOW() WHERE id = $1", [
+      scanId,
+    ]);
     await client.query('COMMIT');
-    return scan;
+    return {
+      id: scan.id,
+      sha256: scan.sha256,
+      stored_path: scan.stored_path,
+      original_filename: scan.original_filename,
+    };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
