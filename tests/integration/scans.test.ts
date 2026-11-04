@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -9,6 +9,8 @@ import { Pool } from 'pg';
 import { buildApp } from '../../services/api/src/app';
 import { runMigrations } from '../../services/api/src/migrate';
 import { connectRabbitMq } from '../../services/api/src/rabbitmq';
+import { startOutboxDispatcher } from '../../services/api/src/outbox';
+import { prunePublishedOutboxEvents } from '../../services/api/src/outbox-retention';
 
 jest.setTimeout(30_000);
 
@@ -20,22 +22,33 @@ describe('scan upload integration', () => {
   let worker: ChildProcessWithoutNullStreams;
   let apiUrl: string;
   let rabbitUrl: string;
+  let outbox: ReturnType<typeof startOutboxDispatcher>;
 
   beforeAll(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'mini-scan-integration-'));
     const config = loadConfig({
       ...process.env,
       DATABASE_URL: process.env.DATABASE_URL ?? 'postgres://scans:scans@localhost:5432/scans',
-      RABBITMQ_URL: process.env.RABBITMQ_URL ?? 'amqp://guest:guest@localhost:5672',
+      RABBITMQ_URL: process.env.RABBITMQ_URL ?? 'amqp://miniscan:miniscan@localhost:5672',
       LOG_LEVEL: 'fatal',
       FILE_STORAGE_PATH: tempDir,
-      SCAN_RETRY_BASE_DELAY_MS: '100',
+      SCAN_RETRY_BASE_DELAY_MS: '1000',
     });
     rabbitUrl = config.RABBITMQ_URL;
     pool = new Pool({ connectionString: config.DATABASE_URL });
     await runMigrations(pool);
     rabbit = await connectRabbitMq(config.RABBITMQ_URL);
     app = await buildApp({ config, pool, rabbit });
+    outbox = startOutboxDispatcher({
+      pool,
+      rabbit,
+      pollIntervalMs: 20,
+      retentionDays: config.OUTBOX_RETENTION_DAYS,
+      cleanupIntervalMs: config.OUTBOX_CLEANUP_INTERVAL_MS,
+      onPublished: () => undefined,
+      onPruned: () => undefined,
+      onError: (_scanId, error) => console.error('integration outbox error', error),
+    });
     apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
 
     worker = spawn(process.execPath, [path.resolve('services/worker/dist/index.js')], {
@@ -46,7 +59,7 @@ describe('scan upload integration', () => {
         RABBITMQ_URL: config.RABBITMQ_URL,
         LOG_LEVEL: 'info',
         FILE_STORAGE_PATH: tempDir,
-        SCAN_RETRY_BASE_DELAY_MS: '100',
+        SCAN_RETRY_BASE_DELAY_MS: '1000',
       },
       stdio: 'pipe',
     });
@@ -59,6 +72,7 @@ describe('scan upload integration', () => {
       worker.kill('SIGTERM');
       await exited;
     }
+    if (outbox) await outbox.stop();
     if (app) await app.close();
     if (rabbit) await rabbit.close();
     if (pool) await pool.end();
@@ -73,6 +87,16 @@ describe('scan upload integration', () => {
     const completed = await waitForScan(firstBody.scanId);
     expect(completed.status).toBe('Clean');
     expect(completed.result.sha256).toBeTruthy();
+    let outboxPublishedAt: Date | null | undefined;
+    await waitFor(async () => {
+      const outboxState = await pool.query<{ published_at: Date | null }>(
+        'SELECT published_at FROM scan_outbox WHERE scan_id = $1 AND event_type = $2',
+        [firstBody.scanId, 'scan.queued'],
+      );
+      outboxPublishedAt = outboxState.rows[0]?.published_at;
+      return outboxPublishedAt instanceof Date;
+    });
+    expect(outboxPublishedAt).toBeInstanceOf(Date);
 
     const second = await upload(content);
     expect(second.status).toBe(202);
@@ -112,6 +136,28 @@ describe('scan upload integration', () => {
     expect(afterDuplicateMessage.rows[0]?.updated_at).toEqual(
       beforeDuplicateMessage.rows[0]?.updated_at,
     );
+  });
+
+  it('removes published outbox events older than the retention period', async () => {
+    const scanId = randomUUID();
+    const sha256 = createHash('sha256').update(scanId).digest('hex');
+    const eventId = randomUUID();
+    await pool.query(
+      `INSERT INTO scans (id, sha256, stored_path, original_filename, status)
+       VALUES ($1, $2, '/data/uploads/expired.bin', 'expired.bin', 'Clean')`,
+      [scanId, sha256],
+    );
+    await pool.query(
+      `INSERT INTO scan_outbox (id, scan_id, event_type, payload, created_at, published_at)
+       VALUES ($1, $2, 'scan.queued', $3::jsonb, NOW() - INTERVAL '31 days', NOW() - INTERVAL '31 days')`,
+      [eventId, scanId, JSON.stringify({ scanId, sha256, filePath: '/data/uploads/expired.bin' })],
+    );
+
+    const deleted = await prunePublishedOutboxEvents(pool, 30);
+    const remaining = await pool.query('SELECT id FROM scan_outbox WHERE id = $1', [eventId]);
+
+    expect(deleted).toBeGreaterThanOrEqual(1);
+    expect(remaining.rowCount).toBe(0);
   });
 
   async function upload(content: string) {

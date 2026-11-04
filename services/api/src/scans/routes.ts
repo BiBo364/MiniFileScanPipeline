@@ -4,7 +4,6 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AppConfig } from '@mini-scan/shared';
-import type { RabbitMqPublisher } from '../rabbitmq';
 import { getScanById, insertQueuedScan } from './repository';
 import { sanitizeOriginalFilename, saveUploadAndHash, storedFilePath } from './storage';
 
@@ -14,7 +13,7 @@ const scanIdParams = z.object({
 
 export function registerScanRoutes(
   app: Pick<FastifyInstance, 'get' | 'post'>,
-  deps: { config: AppConfig; pool: Pool; rabbit: RabbitMqPublisher },
+  deps: { config: AppConfig; pool: Pool },
 ): void {
   app.post('/scans', async (request, reply) => {
     const file = await request.file();
@@ -53,12 +52,6 @@ export function registerScanRoutes(
         .info({ sha256: saved.sha256 }, 'duplicate upload reused existing scan');
       return reply.code(202).send({ scanId: savedScan.scan.id });
     }
-
-    await deps.rabbit.publishScanJob({
-      scanId: savedScan.scan.id,
-      sha256: saved.sha256,
-      filePath,
-    });
 
     log.info({ sha256: saved.sha256 }, 'scan queued');
     return reply.code(202).send({ scanId });

@@ -40,7 +40,7 @@ export async function buildApp(deps: {
   });
 
   registerHealthRoute(app, { pool: deps.pool, rabbit: deps.rabbit });
-  registerScanRoutes(app, deps);
+  registerScanRoutes(app, { config: deps.config, pool: deps.pool });
 
   app.setErrorHandler((error: unknown, request, reply) => {
     request.log.error({ err: error }, 'request failed');
