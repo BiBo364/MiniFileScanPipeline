@@ -21,10 +21,11 @@ describe('scan upload integration', () => {
   let apiUrl: string;
 
   beforeAll(async () => {
-    loadConfig();
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'mini-scan-integration-'));
     const config = loadConfig({
       ...process.env,
+      DATABASE_URL: process.env.DATABASE_URL ?? 'postgres://scans:scans@localhost:5432/scans',
+      RABBITMQ_URL: process.env.RABBITMQ_URL ?? 'amqp://guest:guest@localhost:5672',
       LOG_LEVEL: 'fatal',
       FILE_STORAGE_PATH: tempDir,
       SCAN_RETRY_BASE_DELAY_MS: '100',
@@ -39,6 +40,8 @@ describe('scan upload integration', () => {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        DATABASE_URL: config.DATABASE_URL,
+        RABBITMQ_URL: config.RABBITMQ_URL,
         LOG_LEVEL: 'info',
         FILE_STORAGE_PATH: tempDir,
         SCAN_RETRY_BASE_DELAY_MS: '100',
