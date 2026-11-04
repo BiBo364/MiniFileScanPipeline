@@ -5,6 +5,7 @@ import type { AppConfig } from '@mini-scan/shared';
 import { registerHealthRoute } from './health';
 import type { RabbitMqPublisher } from './rabbitmq';
 import { registerAuthRoutes } from './auth/routes';
+import { registerFrontendRoutes } from './frontend';
 import { registerScanRoutes } from './scans/routes';
 
 function getErrorStatusCode(error: unknown): number {
@@ -37,6 +38,7 @@ export async function buildApp(deps: { config: AppConfig; pool: Pool; rabbit: Ra
   });
 
   registerHealthRoute(app, { pool: deps.pool, rabbit: deps.rabbit });
+  registerFrontendRoutes(app);
   registerAuthRoutes(app, { config: deps.config, pool: deps.pool });
   registerScanRoutes(app, { config: deps.config, pool: deps.pool });
 

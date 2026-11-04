@@ -178,6 +178,7 @@ describe('scan upload integration', () => {
   it("requires authentication and hides another user's scans", async () => {
     const anonymous = await fetch(`${apiUrl}/scans/${randomUUID()}`);
     expect(anonymous.status).toBe(401);
+    expect((await fetch(`${apiUrl}/scans`)).status).toBe(401);
 
     const firstUpload = await upload(`private fixture ${randomUUID()}`);
     const firstBody = (await firstUpload.json()) as { scanId: string };
@@ -196,6 +197,10 @@ describe('scan upload integration', () => {
       headers: { cookie: otherCookie ?? '' },
     });
     expect(hiddenScan.status).toBe(404);
+
+    const otherHistory = await fetch(`${apiUrl}/scans`, { headers: { cookie: otherCookie ?? '' } });
+    expect(otherHistory.status).toBe(200);
+    expect(await otherHistory.json()).toEqual([]);
   });
 
   it('logs in, returns the session user, and revokes a session on logout', async () => {

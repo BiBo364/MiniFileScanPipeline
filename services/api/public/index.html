@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f5f0" />
+    <meta
+      name="description"
+      content="Upload a file to the Mini File Scan Pipeline and follow its scan status."
+    />
+    <title>Mini File Scan Pipeline</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Mini Scan home">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span>MINI<span class="brand-light">SCAN</span></span>
+        </a>
+        <div class="system-status"><span class="status-dot"></span> SCAN PIPELINE</div>
+      </header>
+
+      <main>
+        <section id="auth-view" class="auth-layout" aria-labelledby="auth-title" hidden>
+          <div class="intro-panel">
+            <p class="eyebrow">PRIVATE FILE ANALYSIS</p>
+            <h1>Know what’s<br />inside your files.</h1>
+            <p class="intro-copy">
+              Send a file through the scan pipeline and follow its result from queue to verdict.
+            </p>
+            <div class="feature-line"><span>01</span> Private scan history</div>
+            <div class="feature-line"><span>02</span> SHA-256 fingerprinting</div>
+            <div class="feature-line"><span>03</span> Asynchronous results</div>
+          </div>
+
+          <div class="auth-card panel">
+            <div class="card-kicker">YOUR WORKSPACE</div>
+            <h2 id="auth-title">Welcome back</h2>
+            <p id="auth-description" class="muted">Sign in to continue to your scans.</p>
+            <div class="auth-switch" role="group" aria-label="Account action">
+              <button id="login-mode" class="switch-button active" type="button">Sign in</button>
+              <button id="register-mode" class="switch-button" type="button">Create account</button>
+            </div>
+            <form id="auth-form">
+              <label for="email">Email address</label>
+              <input id="email" name="email" type="email" autocomplete="email" required />
+              <label for="password">Password</label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                minlength="12"
+                maxlength="128"
+                required
+              />
+              <p id="password-hint" class="field-hint" hidden>Use at least 12 characters.</p>
+              <button id="auth-submit" class="button button-primary full-width" type="submit">
+                Sign in <span aria-hidden="true">→</span>
+              </button>
+            </form>
+            <p id="auth-message" class="message" role="status" aria-live="polite"></p>
+          </div>
+        </section>
+
+        <section id="dashboard-view" hidden>
+          <div class="dashboard-heading">
+            <div>
+              <p class="eyebrow">YOUR PRIVATE WORKSPACE</p>
+              <h1>File scan dashboard</h1>
+              <p class="muted">
+                Upload a file and track the result as it moves through the pipeline.
+              </p>
+            </div>
+            <div class="account-tools">
+              <span id="account-email" class="account-email"></span>
+              <button id="logout-button" class="button button-quiet" type="button">Sign out</button>
+            </div>
+          </div>
+
+          <section class="upload-panel panel" aria-labelledby="upload-title">
+            <div class="section-heading">
+              <div>
+                <div class="card-kicker">NEW ANALYSIS</div>
+                <h2 id="upload-title">Upload a file</h2>
+              </div>
+              <span class="size-note">MAX FILE SIZE <strong>10 MB</strong></span>
+            </div>
+            <form id="upload-form" class="upload-form">
+              <label class="file-picker" for="file-input">
+                <span class="upload-icon" aria-hidden="true">↑</span>
+                <span class="file-picker-copy">
+                  <strong id="file-label">Choose a file to scan</strong>
+                  <span>Any file type · up to 10 MB</span>
+                </span>
+                <span class="button button-secondary">Browse files</span>
+                <input id="file-input" type="file" required />
+              </label>
+              <button id="upload-submit" class="button button-primary" type="submit" disabled>
+                Start scan <span aria-hidden="true">→</span>
+              </button>
+            </form>
+            <p id="upload-message" class="message" role="status" aria-live="polite"></p>
+          </section>
+
+          <section class="history-section" aria-labelledby="history-title">
+            <div class="section-heading history-heading">
+              <div>
+                <div class="card-kicker">RECENT ACTIVITY</div>
+                <h2 id="history-title">Your scans</h2>
+              </div>
+              <button id="refresh-button" class="button button-quiet" type="button">
+                <span aria-hidden="true">↻</span> Refresh
+              </button>
+            </div>
+            <div id="scan-list" class="scan-list" aria-live="polite"></div>
+            <p id="scan-message" class="message" role="status"></p>
+          </section>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>MINI FILE SCAN PIPELINE</span>
+        <span>ASYNC FILE ANALYSIS · STAGE 10</span>
+      </footer>
+    </div>
+  </body>
+</html>

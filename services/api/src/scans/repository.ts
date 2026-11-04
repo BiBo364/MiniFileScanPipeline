@@ -84,3 +84,14 @@ export async function getScanById(
   ]);
   return result.rows[0] ?? null;
 }
+
+export async function getRecentScans(pool: Pool, ownerId: string): Promise<ScanRow[]> {
+  const result = await pool.query<ScanRow>(
+    `SELECT * FROM scans
+     WHERE owner_id = $1
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [ownerId],
+  );
+  return result.rows;
+}
