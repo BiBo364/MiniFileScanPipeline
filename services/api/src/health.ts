@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { pingPostgres } from './postgres';
-import { pingRabbitMq } from './rabbitmq';
+import type { RabbitMqPublisher } from './rabbitmq';
 
 type HealthStatus = 'ok' | 'error';
 
@@ -16,12 +16,12 @@ async function asCheck(operation: Promise<void>): Promise<HealthStatus> {
 
 export function registerHealthRoute(
   app: Pick<FastifyInstance, 'get'>,
-  deps: { pool: Pool; rabbitMqUrl: string },
+  deps: { pool: Pool; rabbit: RabbitMqPublisher },
 ): void {
   app.get('/health', async (_request, reply) => {
     const [postgres, rabbitmq] = await Promise.all([
       asCheck(pingPostgres(deps.pool)),
-      asCheck(pingRabbitMq(deps.rabbitMqUrl)),
+      asCheck(deps.rabbit.ping()),
     ]);
 
     const healthy = postgres === 'ok' && rabbitmq === 'ok';
