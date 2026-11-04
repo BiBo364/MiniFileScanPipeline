@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { AppConfig } from '@mini-scan/shared';
 import { getScanById, insertQueuedScan } from './repository';
 import { sanitizeOriginalFilename, saveUploadAndHash, storedFilePath } from './storage';
+import { getSessionUserId } from '../auth/sessions';
 
 const scanIdParams = z.object({
   id: z.string().uuid(),
@@ -16,6 +17,21 @@ export function registerScanRoutes(
   deps: { config: AppConfig; pool: Pool },
 ): void {
   app.post('/scans', async (request, reply) => {
+    if (request.headers['sec-fetch-site'] === 'cross-site') {
+      return reply.code(403).send({ error: 'Cross-origin request rejected' });
+    }
+    if (request.headers.origin) {
+      try {
+        if (new URL(request.headers.origin).host !== request.headers.host) {
+          return reply.code(403).send({ error: 'Cross-origin request rejected' });
+        }
+      } catch {
+        return reply.code(403).send({ error: 'Cross-origin request rejected' });
+      }
+    }
+    const ownerId = await getSessionUserId(deps.pool, request);
+    if (!ownerId) return reply.code(401).send({ error: 'Authentication required' });
+
     const file = await request.file();
     if (!file) {
       return reply.code(400).send({ error: 'Expected a multipart file field named "file"' });
@@ -39,6 +55,7 @@ export function registerScanRoutes(
         sha256: saved.sha256,
         storedPath: filePath,
         originalFilename,
+        ownerId,
       });
     } catch (error) {
       await unlink(filePath).catch(() => undefined);
@@ -58,12 +75,15 @@ export function registerScanRoutes(
   });
 
   app.get('/scans/:id', async (request, reply) => {
+    const ownerId = await getSessionUserId(deps.pool, request);
+    if (!ownerId) return reply.code(401).send({ error: 'Authentication required' });
+
     const parsed = scanIdParams.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'id must be a UUID' });
     }
 
-    const scan = await getScanById(deps.pool, parsed.data.id);
+    const scan = await getScanById(deps.pool, parsed.data.id, ownerId);
     if (!scan) {
       return reply.code(404).send({ error: 'Scan not found' });
     }

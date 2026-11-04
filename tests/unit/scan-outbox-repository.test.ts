@@ -10,6 +10,7 @@ const scan = {
   result_details: null,
   created_at: new Date('2026-11-04T00:00:00Z'),
   updated_at: new Date('2026-11-04T00:00:00Z'),
+  owner_id: 'f6aa78e3-7abf-4d32-88c5-2bd0eefdb9ce',
 };
 
 function fakePool(options: { inserted?: boolean; outboxError?: Error } = {}) {
@@ -35,6 +36,7 @@ describe('insertQueuedScan outbox transaction', () => {
     sha256: scan.sha256,
     storedPath: scan.stored_path,
     originalFilename: scan.original_filename,
+    ownerId: scan.owner_id,
   };
 
   it('commits the scan and its message in the same transaction', async () => {
