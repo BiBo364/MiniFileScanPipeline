@@ -15,3 +15,21 @@ poll the API for the result.
 
 ## Tech stack
 Node.js, TypeScript, Fastify, RabbitMQ, PostgreSQL, Jest, Docker Compose, GitHub Actions
+
+## Stage 1 — run locally
+
+Stage 1 provides the monorepo skeleton, typed config, Postgres + RabbitMQ via Docker Compose, and `GET /health`.
+
+```bash
+cp .env.example .env
+docker compose up -d
+npm install
+npm run build
+npm start
+```
+
+In another terminal:
+
+```bash
+curl http://localhost:3000/health
+```
