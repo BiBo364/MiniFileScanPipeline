@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import {
   QUEUE_NAMES,
   loadConfig,
+  nextScanRetry,
   scanJobMessageSchema,
   scanRetryQueueName,
 } from '@mini-scan/shared';
@@ -17,16 +18,23 @@ async function publishConfirmed(
   attempt: number,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    channel.sendToQueue(queue, message.content, {
-      persistent: true,
-      contentType: 'application/json',
-      headers: { ...message.properties.headers, 'x-scan-attempt': attempt },
-      messageId: message.properties.messageId,
-    }, (error) => (error ? reject(error) : resolve()));
+    channel.sendToQueue(
+      queue,
+      message.content,
+      {
+        persistent: true,
+        contentType: 'application/json',
+        headers: { ...message.properties.headers, 'x-scan-attempt': attempt },
+        messageId: message.properties.messageId,
+      },
+      (error) => (error ? reject(error) : resolve()),
+    );
   });
 }
 
-function parseMessage(message: ConsumeMessage): ReturnType<typeof scanJobMessageSchema.parse> | null {
+function parseMessage(
+  message: ConsumeMessage,
+): ReturnType<typeof scanJobMessageSchema.parse> | null {
   try {
     return scanJobMessageSchema.parse(JSON.parse(message.content.toString()));
   } catch {
@@ -51,7 +59,11 @@ async function main(): Promise<void> {
     await channel.assertQueue(scanRetryQueueName(attempt), {
       durable: true,
       arguments: {
-        'x-message-ttl': config.SCAN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 2),
+        'x-message-ttl': nextScanRetry(
+          attempt - 1,
+          config.SCAN_MAX_ATTEMPTS,
+          config.SCAN_RETRY_BASE_DELAY_MS,
+        )?.delayMs,
         'x-dead-letter-exchange': '',
         'x-dead-letter-routing-key': QUEUE_NAMES.SCAN_JOBS,
       },
@@ -108,17 +120,32 @@ async function main(): Promise<void> {
       }
 
       try {
-        if (attempt >= config.SCAN_MAX_ATTEMPTS) {
+        const retry = nextScanRetry(
+          attempt,
+          config.SCAN_MAX_ATTEMPTS,
+          config.SCAN_RETRY_BASE_DELAY_MS,
+        );
+        if (!retry) {
           await publishConfirmed(channel, QUEUE_NAMES.SCAN_DEAD, message, attempt);
           log.error({ attempt, err: error }, 'retry limit reached; sent to dead-letter queue');
         } else {
-          const nextAttempt = attempt + 1;
-          await publishConfirmed(channel, scanRetryQueueName(nextAttempt), message, nextAttempt);
-          log.warn({ attempt, nextAttempt, err: error }, 'scan failed; scheduled retry');
+          await publishConfirmed(
+            channel,
+            scanRetryQueueName(retry.attempt),
+            message,
+            retry.attempt,
+          );
+          log.warn(
+            { attempt, nextAttempt: retry.attempt, delayMs: retry.delayMs, err: error },
+            'scan failed; scheduled retry',
+          );
         }
         channel.ack(message);
       } catch (publishError) {
-        log.error({ err: publishError }, 'could not route failed scan; requeueing original message');
+        log.error(
+          { err: publishError },
+          'could not route failed scan; requeueing original message',
+        );
         channel.nack(message, false, true);
       }
     }
@@ -136,7 +163,10 @@ async function main(): Promise<void> {
     const log = logger.child({ scanId: payload.scanId });
     try {
       await markScanFailed(pool, payload.scanId, 'retry_limit_exceeded');
-      log.error({ attempt: messageAttempt(message, config.SCAN_MAX_ATTEMPTS) }, 'scan marked Failed after retry exhaustion');
+      log.error(
+        { attempt: messageAttempt(message, config.SCAN_MAX_ATTEMPTS) },
+        'scan marked Failed after retry exhaustion',
+      );
       channel.ack(message);
     } catch (error) {
       log.error({ err: error }, 'could not persist dead-letter failure; requeueing');
@@ -144,13 +174,24 @@ async function main(): Promise<void> {
     }
   };
 
-  const workConsumer = await channel.consume(QUEUE_NAMES.SCAN_JOBS, (message) => {
-    track(processScan(message));
-  }, { noAck: false });
-  const deadConsumer = await channel.consume(QUEUE_NAMES.SCAN_DEAD, (message) => {
-    track(processDeadLetter(message));
-  }, { noAck: false });
-  logger.info({ queue: QUEUE_NAMES.SCAN_JOBS, deadLetterQueue: QUEUE_NAMES.SCAN_DEAD }, 'worker ready');
+  const workConsumer = await channel.consume(
+    QUEUE_NAMES.SCAN_JOBS,
+    (message) => {
+      track(processScan(message));
+    },
+    { noAck: false },
+  );
+  const deadConsumer = await channel.consume(
+    QUEUE_NAMES.SCAN_DEAD,
+    (message) => {
+      track(processDeadLetter(message));
+    },
+    { noAck: false },
+  );
+  logger.info(
+    { queue: QUEUE_NAMES.SCAN_JOBS, deadLetterQueue: QUEUE_NAMES.SCAN_DEAD },
+    'worker ready',
+  );
 
   const shutdown = async (signal: string): Promise<void> => {
     if (stopping) return;
@@ -165,14 +206,22 @@ async function main(): Promise<void> {
     logger.info('worker stopped');
   };
 
-  process.once('SIGINT', () => void shutdown('SIGINT').catch((error: unknown) => {
-    logger.fatal({ err: error }, 'worker shutdown failed');
-    process.exit(1);
-  }));
-  process.once('SIGTERM', () => void shutdown('SIGTERM').catch((error: unknown) => {
-    logger.fatal({ err: error }, 'worker shutdown failed');
-    process.exit(1);
-  }));
+  process.once(
+    'SIGINT',
+    () =>
+      void shutdown('SIGINT').catch((error: unknown) => {
+        logger.fatal({ err: error }, 'worker shutdown failed');
+        process.exit(1);
+      }),
+  );
+  process.once(
+    'SIGTERM',
+    () =>
+      void shutdown('SIGTERM').catch((error: unknown) => {
+        logger.fatal({ err: error }, 'worker shutdown failed');
+        process.exit(1);
+      }),
+  );
   await new Promise<void>((resolve) => {
     connection.once('close', resolve);
     process.once('beforeExit', resolve);
