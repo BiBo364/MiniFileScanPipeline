@@ -19,6 +19,7 @@ describe('scan upload integration', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   let worker: ChildProcessWithoutNullStreams;
   let apiUrl: string;
+  let rabbitUrl: string;
 
   beforeAll(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'mini-scan-integration-'));
@@ -30,6 +31,7 @@ describe('scan upload integration', () => {
       FILE_STORAGE_PATH: tempDir,
       SCAN_RETRY_BASE_DELAY_MS: '100',
     });
+    rabbitUrl = config.RABBITMQ_URL;
     pool = new Pool({ connectionString: config.DATABASE_URL });
     await runMigrations(pool);
     rabbit = await connectRabbitMq(config.RABBITMQ_URL);
@@ -86,7 +88,7 @@ describe('scan upload integration', () => {
     );
     expect(beforeDuplicateMessage.rows[0]?.count).toBe('1');
 
-    const connection = await amqp.connect(loadConfig().RABBITMQ_URL);
+    const connection = await amqp.connect(rabbitUrl);
     const channel = await connection.createChannel();
     await channel.sendToQueue(
       QUEUE_NAMES.SCAN_JOBS,
