@@ -88,6 +88,13 @@ const envSchema = z.object({
   SCAN_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
   SCAN_RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().max(60_000).default(1000),
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().max(60_000).default(1000),
+  OUTBOX_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+  OUTBOX_CLEANUP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(7 * 24 * 60 * 60 * 1000)
+    .default(24 * 60 * 60 * 1000),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

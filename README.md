@@ -29,6 +29,7 @@ PostgreSQL stores scan state, result details, and pending outbox events. The fil
 5. **Tests and CI:** added Jest/ts-jest unit tests and a Docker Compose integration test for upload through completed result, including duplicate upload/message behavior. GitHub Actions runs lint, build, coverage, and integration checks.
 6. **Documentation and full local stack:** documented the architecture and design decisions and added API/worker containers so one Compose command starts the complete project.
 7. **Transactional outbox:** writes the scan and its publish event in one database transaction, then dispatches pending events with RabbitMQ publisher confirms. The API retries after broker reconnects, and the Compose worker restarts if its broker connection closes.
+8. **Outbox retention:** periodically removes published outbox events older than the configured retention window in bounded batches. Unpublished events are never eligible for cleanup.
 
 ## Run the stack
 
@@ -76,6 +77,7 @@ docker compose logs -f api worker
 - **Transactional claim:** the worker locks a scan row and changes `Queued` to `Scanning` in one transaction. A duplicate delivery cannot claim a job already in progress or in a terminal state.
 - **Acknowledgements:** the worker acknowledges a completed message only after it saves the result. Failed processing is sent through exponential-delay retry queues; after the configured attempt limit it moves to the dead-letter queue and is marked `Failed`.
 - **Transactional outbox:** the scan row and intent to publish are committed together. A dispatcher publishes pending events and marks them complete only after RabbitMQ confirms receipt.
+- **Outbox retention:** only confirmed events older than `OUTBOX_RETENTION_DAYS` are deleted, in batches of 500. Pending events remain available for retry.
 - **Filename safety:** client filenames are sanitized for display. Files are stored under generated scan IDs, so client paths never determine storage paths.
 - **Scanner scope:** this is a pipeline simulation, not a full antivirus engine. It checks known SHA-256 signatures, filename extensions, file size, and stored-file integrity.
 - **Delivery trade-off:** a crash after RabbitMQ confirms a publish but before PostgreSQL marks the outbox row complete can cause a duplicate message. The worker's transactional status claim makes that duplicate harmless.
@@ -91,10 +93,12 @@ Configuration is read from environment variables and validated at startup. `.env
 - `SCAN_MAX_ATTEMPTS`: total processing attempts before dead-lettering.
 - `SCAN_RETRY_BASE_DELAY_MS`: base delay; each later retry doubles it.
 - `OUTBOX_POLL_INTERVAL_MS`: delay between checks when no unpublished event is available.
+- `OUTBOX_RETENTION_DAYS`: age after which a published event can be removed; defaults to 30 days.
+- `OUTBOX_CLEANUP_INTERVAL_MS`: time between cleanup runs; defaults to one day.
 
 ## What I would improve next
 
 - Replace signature and extension checks with a real malware scanning engine in an isolated environment.
 - Move uploads to object storage and add retention/deletion policies.
 - Add authentication, rate limiting, metrics, and multi-worker load tests.
-- Add retention for published outbox rows and alerts for events that remain pending too long.
+- Add alerts for outbox events that remain pending too long.
