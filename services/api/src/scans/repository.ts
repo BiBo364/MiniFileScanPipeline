@@ -20,21 +20,28 @@ export async function insertQueuedScan(
     storedPath: string;
     originalFilename: string;
   },
-): Promise<ScanRow> {
+): Promise<{ scan: ScanRow; inserted: boolean }> {
   const result = await pool.query<ScanRow>(
     `
       INSERT INTO scans (id, sha256, stored_path, original_filename, status)
       VALUES ($1, $2, $3, $4, 'Queued')
+      ON CONFLICT (sha256) DO NOTHING
       RETURNING *
     `,
     [input.id, input.sha256, input.storedPath, input.originalFilename],
   );
 
-  const row = result.rows[0];
-  if (!row) {
-    throw new Error('Insert returned no scan row');
+  const insertedRow = result.rows[0];
+  if (insertedRow) {
+    return { scan: insertedRow, inserted: true };
   }
-  return row;
+
+  const existing = await pool.query<ScanRow>('SELECT * FROM scans WHERE sha256 = $1', [input.sha256]);
+  const row = existing.rows[0];
+  if (!row) {
+    throw new Error('Conflicting scan hash was not found after insert');
+  }
+  return { scan: row, inserted: false };
 }
 
 export async function getScanById(pool: Pool, id: string): Promise<ScanRow | null> {
