@@ -56,6 +56,17 @@ const envSchema = z.object({
   RABBITMQ_URL: z.string().min(1, 'RABBITMQ_URL is required'),
   FILE_STORAGE_PATH: z.string().min(1, 'FILE_STORAGE_PATH is required'),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
+  SCAN_MAX_FILE_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
+  SCAN_BLOCKLIST_SHA256: z
+    .string()
+    .default('')
+    .transform((value) => value.split(',').map((hash) => hash.trim().toLowerCase()).filter(Boolean))
+    .pipe(z.array(z.string().regex(/^[a-f0-9]{64}$/))),
+  DANGEROUS_FILE_EXTENSIONS: z
+    .string()
+    .default('.exe,.dll,.bat,.cmd,.com,.scr,.js,.vbs,.ps1')
+    .transform((value) => value.split(',').map((extension) => extension.trim().toLowerCase()).filter(Boolean))
+    .pipe(z.array(z.string().regex(/^\.[a-z0-9]+$/))),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
