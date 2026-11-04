@@ -11,6 +11,7 @@ export type ScanRow = {
   result_details: Record<string, unknown> | null;
   created_at: Date;
   updated_at: Date;
+  owner_id: string | null;
 };
 
 export async function insertQueuedScan(
@@ -20,6 +21,7 @@ export async function insertQueuedScan(
     sha256: string;
     storedPath: string;
     originalFilename: string;
+    ownerId: string;
   },
 ): Promise<{ scan: ScanRow; inserted: boolean }> {
   const client = await pool.connect();
@@ -27,12 +29,12 @@ export async function insertQueuedScan(
     await client.query('BEGIN');
     const result = await client.query<ScanRow>(
       `
-        INSERT INTO scans (id, sha256, stored_path, original_filename, status)
-        VALUES ($1, $2, $3, $4, 'Queued')
-        ON CONFLICT (sha256) DO NOTHING
+        INSERT INTO scans (id, sha256, stored_path, original_filename, status, owner_id)
+        VALUES ($1, $2, $3, $4, 'Queued', $5)
+        ON CONFLICT (owner_id, sha256) DO NOTHING
         RETURNING *
       `,
-      [input.id, input.sha256, input.storedPath, input.originalFilename],
+      [input.id, input.sha256, input.storedPath, input.originalFilename, input.ownerId],
     );
 
     const insertedRow = result.rows[0];
@@ -53,9 +55,10 @@ export async function insertQueuedScan(
       return { scan: insertedRow, inserted: true };
     }
 
-    const existing = await client.query<ScanRow>('SELECT * FROM scans WHERE sha256 = $1', [
-      input.sha256,
-    ]);
+    const existing = await client.query<ScanRow>(
+      'SELECT * FROM scans WHERE owner_id = $1 AND sha256 = $2',
+      [input.ownerId, input.sha256],
+    );
     const row = existing.rows[0];
     if (!row) {
       throw new Error('Conflicting scan hash was not found after insert');
@@ -70,7 +73,14 @@ export async function insertQueuedScan(
   }
 }
 
-export async function getScanById(pool: Pool, id: string): Promise<ScanRow | null> {
-  const result = await pool.query<ScanRow>('SELECT * FROM scans WHERE id = $1', [id]);
+export async function getScanById(
+  pool: Pool,
+  id: string,
+  ownerId: string,
+): Promise<ScanRow | null> {
+  const result = await pool.query<ScanRow>('SELECT * FROM scans WHERE id = $1 AND owner_id = $2', [
+    id,
+    ownerId,
+  ]);
   return result.rows[0] ?? null;
 }

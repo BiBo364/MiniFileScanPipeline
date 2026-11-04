@@ -10,6 +10,7 @@ module.exports = {
   },
   collectCoverageFrom: [
     'services/api/src/scans/hash.ts',
+    'services/api/src/auth/sessions.ts',
     'services/worker/src/scanner.ts',
     'services/worker/src/repository.ts',
     'packages/shared/src/retries.ts',

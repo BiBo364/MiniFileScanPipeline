@@ -21,6 +21,8 @@ describe('scan upload integration', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   let worker: ChildProcessWithoutNullStreams;
   let apiUrl: string;
+  let cookie = '';
+  let accountEmail = '';
   let rabbitUrl: string;
   let outbox: ReturnType<typeof startOutboxDispatcher>;
 
@@ -50,6 +52,19 @@ describe('scan upload integration', () => {
       onError: (_scanId, error) => console.error('integration outbox error', error),
     });
     apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+
+    accountEmail = `integration-${randomUUID()}@example.test`;
+    const registered = await fetch(`${apiUrl}/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: accountEmail,
+        password: 'integration-password-123',
+      }),
+    });
+    expect(registered.status).toBe(201);
+    cookie = registered.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    expect(cookie).toContain('mini_scan_session=');
 
     worker = spawn(process.execPath, [path.resolve('services/worker/dist/index.js')], {
       cwd: process.cwd(),
@@ -160,10 +175,55 @@ describe('scan upload integration', () => {
     expect(remaining.rowCount).toBe(0);
   });
 
+  it("requires authentication and hides another user's scans", async () => {
+    const anonymous = await fetch(`${apiUrl}/scans/${randomUUID()}`);
+    expect(anonymous.status).toBe(401);
+
+    const firstUpload = await upload(`private fixture ${randomUUID()}`);
+    const firstBody = (await firstUpload.json()) as { scanId: string };
+    await waitForScan(firstBody.scanId);
+
+    const secondAccount = await fetch(`${apiUrl}/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: `other-${randomUUID()}@example.test`,
+        password: 'integration-password-456',
+      }),
+    });
+    const otherCookie = secondAccount.headers.get('set-cookie')?.split(';', 1)[0];
+    const hiddenScan = await fetch(`${apiUrl}/scans/${firstBody.scanId}`, {
+      headers: { cookie: otherCookie ?? '' },
+    });
+    expect(hiddenScan.status).toBe(404);
+  });
+
+  it('logs in, returns the session user, and revokes a session on logout', async () => {
+    const login = await fetch(`${apiUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: accountEmail, password: 'integration-password-123' }),
+    });
+    expect(login.status).toBe(200);
+    const loginCookie = login.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+
+    const me = await fetch(`${apiUrl}/auth/me`, { headers: { cookie: loginCookie } });
+    expect(me.status).toBe(200);
+
+    const logout = await fetch(`${apiUrl}/auth/logout`, {
+      method: 'POST',
+      headers: { cookie: loginCookie },
+    });
+    expect(logout.status).toBe(204);
+
+    const revoked = await fetch(`${apiUrl}/auth/me`, { headers: { cookie: loginCookie } });
+    expect(revoked.status).toBe(401);
+  });
+
   async function upload(content: string) {
     const form = new FormData();
     form.append('file', new Blob([content], { type: 'text/plain' }), 'sample.txt');
-    return fetch(`${apiUrl}/scans`, { method: 'POST', body: form });
+    return fetch(`${apiUrl}/scans`, { method: 'POST', body: form, headers: { cookie } });
   }
 
   async function waitForScan(scanId: string): Promise<{
@@ -173,7 +233,7 @@ describe('scan upload integration', () => {
   }> {
     let result: { status: string; sha256: string; result: Record<string, unknown> } | undefined;
     await waitFor(async () => {
-      const response = await fetch(`${apiUrl}/scans/${scanId}`);
+      const response = await fetch(`${apiUrl}/scans/${scanId}`, { headers: { cookie } });
       if (!response.ok) return false;
       const scan = (await response.json()) as {
         status: string;

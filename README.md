@@ -16,6 +16,7 @@ flowchart LR
   Worker -->|save status and result| DB
   Worker -->|delayed retries / exhausted jobs| MQ
   Client -->|GET /scans/:id| API
+  Client -->|register / login session| API
 ```
 
 PostgreSQL stores scan state, result details, and pending outbox events. The file itself stays on a shared local Docker volume, so both API and worker use the same path. RabbitMQ carries only the scan ID, expected SHA-256, and stored file path.
@@ -30,6 +31,7 @@ PostgreSQL stores scan state, result details, and pending outbox events. The fil
 6. **Documentation and full local stack:** documented the architecture and design decisions and added API/worker containers so one Compose command starts the complete project.
 7. **Transactional outbox:** writes the scan and its publish event in one database transaction, then dispatches pending events with RabbitMQ publisher confirms. The API retries after broker reconnects, and the Compose worker restarts if its broker connection closes.
 8. **Outbox retention:** periodically removes published outbox events older than the configured retention window in bounded batches. Unpublished events are never eligible for cleanup.
+9. **Authentication and ownership:** adds email/password registration, login/logout, expiring HTTP-only sessions, and per-user scan access. Duplicate uploads are deduplicated per account.
 
 ## Run the stack
 
@@ -51,17 +53,23 @@ Stop the containers with `docker compose down`. Named volumes preserve the datab
 
 ## Try the API
 
+Create an account first. Passwords must be at least 12 characters; the response sets an HTTP-only session cookie:
+
+```bash
+curl -i -c cookies.txt -H 'content-type: application/json' -d '{"email":"you@example.com","password":"a-long-passphrase"}' http://localhost:3000/auth/register
+```
+
 Upload a file (the API accepts files up to 10 MB):
 
 ```bash
-curl -X POST http://localhost:3000/scans \
+curl -b cookies.txt -X POST http://localhost:3000/scans \
   -F "file=@./sample.txt"
 ```
 
 The API returns `202 Accepted` with a `scanId`. Poll the result:
 
 ```bash
-curl http://localhost:3000/scans/<scanId>
+curl -b cookies.txt http://localhost:3000/scans/<scanId>
 ```
 
 Possible statuses are `Queued`, `Scanning`, `Clean`, `Malicious`, and `Failed`. Check API, worker, and dependency health with:
@@ -73,11 +81,13 @@ docker compose logs -f api worker
 
 ## Design decisions
 
-- **Content-based deduplication:** PostgreSQL enforces a unique SHA-256. A repeated upload returns the existing scan ID and does not publish another job.
+- **Content-based deduplication:** PostgreSQL enforces a unique SHA-256 per account. A repeated upload returns that user's existing scan ID and does not publish another job.
 - **Transactional claim:** the worker locks a scan row and changes `Queued` to `Scanning` in one transaction. A duplicate delivery cannot claim a job already in progress or in a terminal state.
 - **Acknowledgements:** the worker acknowledges a completed message only after it saves the result. Failed processing is sent through exponential-delay retry queues; after the configured attempt limit it moves to the dead-letter queue and is marked `Failed`.
 - **Transactional outbox:** the scan row and intent to publish are committed together. A dispatcher publishes pending events and marks them complete only after RabbitMQ confirms receipt.
 - **Outbox retention:** only confirmed events older than `OUTBOX_RETENTION_DAYS` are deleted, in batches of 500. Pending events remain available for retry.
+- **Authentication:** passwords use salted scrypt hashes. Clients receive random opaque session tokens in HTTP-only, SameSite=Strict cookies; PostgreSQL stores only each token's SHA-256 hash. Session lifetime is configured with `AUTH_SESSION_TTL_DAYS`.
+- **Scan ownership:** new scans belong to the authenticated user. Both scan polling and hash deduplication are scoped to that user, so accounts cannot see each other's results or reuse each other's scan IDs.
 - **Filename safety:** client filenames are sanitized for display. Files are stored under generated scan IDs, so client paths never determine storage paths.
 - **Scanner scope:** this is a pipeline simulation, not a full antivirus engine. It checks known SHA-256 signatures, filename extensions, file size, and stored-file integrity.
 - **Delivery trade-off:** a crash after RabbitMQ confirms a publish but before PostgreSQL marks the outbox row complete can cause a duplicate message. The worker's transactional status claim makes that duplicate harmless.
@@ -95,10 +105,12 @@ Configuration is read from environment variables and validated at startup. `.env
 - `OUTBOX_POLL_INTERVAL_MS`: delay between checks when no unpublished event is available.
 - `OUTBOX_RETENTION_DAYS`: age after which a published event can be removed; defaults to 30 days.
 - `OUTBOX_CLEANUP_INTERVAL_MS`: time between cleanup runs; defaults to one day.
+- `AUTH_SESSION_TTL_DAYS`: lifetime for login sessions; defaults to seven days and is limited to 30.
 
 ## What I would improve next
 
 - Replace signature and extension checks with a real malware scanning engine in an isolated environment.
 - Move uploads to object storage and add retention/deletion policies.
-- Add authentication, rate limiting, metrics, and multi-worker load tests.
+- Add account recovery, email verification, rate limiting, metrics, and multi-worker load tests.
+- Build a web interface for registration, login, uploads, and scan status polling.
 - Add alerts for outbox events that remain pending too long.

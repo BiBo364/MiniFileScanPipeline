@@ -95,6 +95,7 @@ const envSchema = z.object({
     .positive()
     .max(7 * 24 * 60 * 60 * 1000)
     .default(24 * 60 * 60 * 1000),
+  AUTH_SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
