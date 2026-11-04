@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     container_name: mini-scan-postgres
     environment:
-      POSTGRES_USER: scans
-      POSTGRES_PASSWORD: scans
-      POSTGRES_DB: scans
+      POSTGRES_USER: ${POSTGRES_USER:-scans}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scans}
+      POSTGRES_DB: ${POSTGRES_DB:-scans}
     ports:
       - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U scans -d scans']
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -19,6 +19,9 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     container_name: mini-scan-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-miniscan}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-miniscan}
     ports:
       - '5672:5672'
       - '15672:15672'
@@ -28,5 +31,67 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgres://scans:scans@postgres:5432/scans}
+      RABBITMQ_URL: ${COMPOSE_RABBITMQ_URL:-amqp://miniscan:miniscan@rabbitmq:5672}
+      FILE_STORAGE_PATH: /data/uploads
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+      SCAN_MAX_FILE_BYTES: ${SCAN_MAX_FILE_BYTES:-10485760}
+      SCAN_BLOCKLIST_SHA256: ${SCAN_BLOCKLIST_SHA256:-}
+      DANGEROUS_FILE_EXTENSIONS: ${DANGEROUS_FILE_EXTENSIONS:-.exe,.dll,.bat,.cmd,.com,.scr,.js,.vbs,.ps1}
+      SCAN_MAX_ATTEMPTS: ${SCAN_MAX_ATTEMPTS:-3}
+      SCAN_RETRY_BASE_DELAY_MS: ${SCAN_RETRY_BASE_DELAY_MS:-1000}
+    ports:
+      - '${HOST_API_PORT:-3000}:3000'
+    volumes:
+      - scan_uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgres://scans:scans@postgres:5432/scans}
+      RABBITMQ_URL: ${COMPOSE_RABBITMQ_URL:-amqp://miniscan:miniscan@rabbitmq:5672}
+      FILE_STORAGE_PATH: /data/uploads
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+      SCAN_MAX_FILE_BYTES: ${SCAN_MAX_FILE_BYTES:-10485760}
+      SCAN_BLOCKLIST_SHA256: ${SCAN_BLOCKLIST_SHA256:-}
+      DANGEROUS_FILE_EXTENSIONS: ${DANGEROUS_FILE_EXTENSIONS:-.exe,.dll,.bat,.cmd,.com,.scr,.js,.vbs,.ps1}
+      SCAN_MAX_ATTEMPTS: ${SCAN_MAX_ATTEMPTS:-3}
+      SCAN_RETRY_BASE_DELAY_MS: ${SCAN_RETRY_BASE_DELAY_MS:-1000}
+    volumes:
+      - scan_uploads:/data/uploads
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  scan_uploads:

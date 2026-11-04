@@ -26,7 +26,7 @@ describe('scan upload integration', () => {
     const config = loadConfig({
       ...process.env,
       DATABASE_URL: process.env.DATABASE_URL ?? 'postgres://scans:scans@localhost:5432/scans',
-      RABBITMQ_URL: process.env.RABBITMQ_URL ?? 'amqp://guest:guest@localhost:5672',
+      RABBITMQ_URL: process.env.RABBITMQ_URL ?? 'amqp://miniscan:miniscan@localhost:5672',
       LOG_LEVEL: 'fatal',
       FILE_STORAGE_PATH: tempDir,
       SCAN_RETRY_BASE_DELAY_MS: '100',
