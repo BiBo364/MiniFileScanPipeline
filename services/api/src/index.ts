@@ -16,7 +16,13 @@ async function main(): Promise<void> {
     pool,
     rabbit,
     pollIntervalMs: config.OUTBOX_POLL_INTERVAL_MS,
+    retentionDays: config.OUTBOX_RETENTION_DAYS,
+    cleanupIntervalMs: config.OUTBOX_CLEANUP_INTERVAL_MS,
     onPublished: (scanId) => app.log.child({ scanId }).info('scan job published from outbox'),
+    onPruned: (count) =>
+      app.log
+        .child({ scanId: 'outbox' })
+        .info({ count }, 'expired published outbox events removed'),
     onError: (scanId, error) =>
       app.log.child({ scanId }).error({ err: error }, 'outbox publish failed; will retry'),
   });

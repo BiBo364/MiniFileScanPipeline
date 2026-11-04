@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { scanJobMessageSchema } from '@mini-scan/shared';
 import type { RabbitMqPublisher } from './rabbitmq';
+import { OUTBOX_CLEANUP_BATCH_SIZE, prunePublishedOutboxEvents } from './outbox-retention';
 
 type OutboxRow = {
   id: string;
@@ -63,14 +64,32 @@ export function startOutboxDispatcher(deps: {
   pool: Pool;
   rabbit: RabbitMqPublisher;
   pollIntervalMs: number;
+  retentionDays: number;
+  cleanupIntervalMs: number;
   onPublished: (scanId: string) => void;
+  onPruned: (count: number) => void;
   onError: (scanId: string, error: unknown) => void;
 }): { stop: () => Promise<void> } {
   let stopping = false;
   let wakeDelay: (() => void) | undefined;
+  let nextCleanupAt = 0;
 
   const run = async (): Promise<void> => {
     while (!stopping) {
+      if (Date.now() >= nextCleanupAt) {
+        try {
+          const deleted = await prunePublishedOutboxEvents(deps.pool, deps.retentionDays);
+          if (deleted > 0) deps.onPruned(deleted);
+          nextCleanupAt =
+            deleted === OUTBOX_CLEANUP_BATCH_SIZE
+              ? Date.now()
+              : Date.now() + deps.cleanupIntervalMs;
+        } catch (error) {
+          deps.onError('outbox', error);
+          nextCleanupAt = Date.now() + deps.pollIntervalMs;
+        }
+      }
+
       try {
         const scanId = await publishNextOutboxEvent(deps.pool, deps.rabbit);
         if (scanId) {

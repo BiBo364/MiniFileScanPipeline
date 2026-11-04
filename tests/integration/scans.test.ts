@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -10,6 +10,7 @@ import { buildApp } from '../../services/api/src/app';
 import { runMigrations } from '../../services/api/src/migrate';
 import { connectRabbitMq } from '../../services/api/src/rabbitmq';
 import { startOutboxDispatcher } from '../../services/api/src/outbox';
+import { prunePublishedOutboxEvents } from '../../services/api/src/outbox-retention';
 
 jest.setTimeout(30_000);
 
@@ -42,7 +43,10 @@ describe('scan upload integration', () => {
       pool,
       rabbit,
       pollIntervalMs: 20,
+      retentionDays: config.OUTBOX_RETENTION_DAYS,
+      cleanupIntervalMs: config.OUTBOX_CLEANUP_INTERVAL_MS,
       onPublished: () => undefined,
+      onPruned: () => undefined,
       onError: (_scanId, error) => console.error('integration outbox error', error),
     });
     apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -132,6 +136,28 @@ describe('scan upload integration', () => {
     expect(afterDuplicateMessage.rows[0]?.updated_at).toEqual(
       beforeDuplicateMessage.rows[0]?.updated_at,
     );
+  });
+
+  it('removes published outbox events older than the retention period', async () => {
+    const scanId = randomUUID();
+    const sha256 = createHash('sha256').update(scanId).digest('hex');
+    const eventId = randomUUID();
+    await pool.query(
+      `INSERT INTO scans (id, sha256, stored_path, original_filename, status)
+       VALUES ($1, $2, '/data/uploads/expired.bin', 'expired.bin', 'Clean')`,
+      [scanId, sha256],
+    );
+    await pool.query(
+      `INSERT INTO scan_outbox (id, scan_id, event_type, payload, created_at, published_at)
+       VALUES ($1, $2, 'scan.queued', $3::jsonb, NOW() - INTERVAL '31 days', NOW() - INTERVAL '31 days')`,
+      [eventId, scanId, JSON.stringify({ scanId, sha256, filePath: '/data/uploads/expired.bin' })],
+    );
+
+    const deleted = await prunePublishedOutboxEvents(pool, 30);
+    const remaining = await pool.query('SELECT id FROM scan_outbox WHERE id = $1', [eventId]);
+
+    expect(deleted).toBeGreaterThanOrEqual(1);
+    expect(remaining.rowCount).toBe(0);
   });
 
   async function upload(content: string) {
