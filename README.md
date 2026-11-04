@@ -6,6 +6,8 @@ Mini File Scan Pipeline is a small portfolio project that demonstrates asynchron
 
 ```mermaid
 flowchart LR
+  Browser[Web dashboard] -->|register / login session| API[Fastify API]
+  Browser -->|upload / list / poll scans| API
   Client[Client] -->|POST /scans| API[Fastify API]
   API -->|write file| Files[(Shared upload volume)]
   API -->|insert scan and outbox event in one transaction| DB[(PostgreSQL)]
@@ -32,6 +34,7 @@ PostgreSQL stores scan state, result details, and pending outbox events. The fil
 7. **Transactional outbox:** writes the scan and its publish event in one database transaction, then dispatches pending events with RabbitMQ publisher confirms. The API retries after broker reconnects, and the Compose worker restarts if its broker connection closes.
 8. **Outbox retention:** periodically removes published outbox events older than the configured retention window in bounded batches. Unpublished events are never eligible for cleanup.
 9. **Authentication and ownership:** adds email/password registration, login/logout, expiring HTTP-only sessions, and per-user scan access. Duplicate uploads are deduplicated per account.
+10. **Web dashboard:** adds a responsive browser interface for accounts, file uploads, and recent scan results. The API serves its static assets from the same origin and exposes an owner-scoped scan history endpoint.
 
 ## Run the stack
 
@@ -53,6 +56,8 @@ Stop the containers with `docker compose down`. Named volumes preserve the datab
 
 ## Try the API
 
+Open [http://localhost:3000](http://localhost:3000) for the browser dashboard. Create an account or sign in, choose a file up to 10 MB, and watch its status update automatically. The dashboard uses the same HTTP-only session cookie as the API.
+
 Create an account first. Passwords must be at least 12 characters; the response sets an HTTP-only session cookie:
 
 ```bash
@@ -72,6 +77,12 @@ The API returns `202 Accepted` with a `scanId`. Poll the result:
 curl -b cookies.txt http://localhost:3000/scans/<scanId>
 ```
 
+List the 50 most recent scans for the signed-in account:
+
+```bash
+curl -b cookies.txt http://localhost:3000/scans
+```
+
 Possible statuses are `Queued`, `Scanning`, `Clean`, `Malicious`, and `Failed`. Check API, worker, and dependency health with:
 
 ```bash
@@ -88,6 +99,7 @@ docker compose logs -f api worker
 - **Outbox retention:** only confirmed events older than `OUTBOX_RETENTION_DAYS` are deleted, in batches of 500. Pending events remain available for retry.
 - **Authentication:** passwords use salted scrypt hashes. Clients receive random opaque session tokens in HTTP-only, SameSite=Strict cookies; PostgreSQL stores only each token's SHA-256 hash. Session lifetime is configured with `AUTH_SESSION_TTL_DAYS`.
 - **Scan ownership:** new scans belong to the authenticated user. Both scan polling and hash deduplication are scoped to that user, so accounts cannot see each other's results or reuse each other's scan IDs.
+- **Frontend:** the dashboard is plain HTML, CSS, and JavaScript served from the API origin. This keeps cookie authentication simple and avoids a separate frontend service or cross-origin configuration.
 - **Filename safety:** client filenames are sanitized for display. Files are stored under generated scan IDs, so client paths never determine storage paths.
 - **Scanner scope:** this is a pipeline simulation, not a full antivirus engine. It checks known SHA-256 signatures, filename extensions, file size, and stored-file integrity.
 - **Delivery trade-off:** a crash after RabbitMQ confirms a publish but before PostgreSQL marks the outbox row complete can cause a duplicate message. The worker's transactional status claim makes that duplicate harmless.
@@ -107,10 +119,11 @@ Configuration is read from environment variables and validated at startup. `.env
 - `OUTBOX_CLEANUP_INTERVAL_MS`: time between cleanup runs; defaults to one day.
 - `AUTH_SESSION_TTL_DAYS`: lifetime for login sessions; defaults to seven days and is limited to 30.
 
+The frontend dashboard refreshes the authenticated user's scan list every four seconds while it is open.
+
 ## What I would improve next
 
 - Replace signature and extension checks with a real malware scanning engine in an isolated environment.
 - Move uploads to object storage and add retention/deletion policies.
-- Add account recovery, email verification, rate limiting, metrics, and multi-worker load tests.
-- Build a web interface for registration, login, uploads, and scan status polling.
+- Add production account controls such as email verification, password reset, login rate limiting, expired-session cleanup, metrics, and multi-worker load tests.
 - Add alerts for outbox events that remain pending too long.

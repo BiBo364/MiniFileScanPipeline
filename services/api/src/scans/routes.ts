@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AppConfig } from '@mini-scan/shared';
-import { getScanById, insertQueuedScan } from './repository';
+import { getRecentScans, getScanById, insertQueuedScan } from './repository';
 import { sanitizeOriginalFilename, saveUploadAndHash, storedFilePath } from './storage';
 import { getSessionUserId } from '../auth/sessions';
 
@@ -72,6 +72,22 @@ export function registerScanRoutes(
 
     log.info({ sha256: saved.sha256 }, 'scan queued');
     return reply.code(202).send({ scanId });
+  });
+
+  app.get('/scans', async (request, reply) => {
+    const ownerId = await getSessionUserId(deps.pool, request);
+    if (!ownerId) return reply.code(401).send({ error: 'Authentication required' });
+
+    const scans = await getRecentScans(deps.pool, ownerId);
+    return scans.map((scan) => ({
+      id: scan.id,
+      originalFilename: scan.original_filename,
+      status: scan.status,
+      sha256: scan.sha256,
+      result: scan.result_details,
+      createdAt: scan.created_at.toISOString(),
+      updatedAt: scan.updated_at.toISOString(),
+    }));
   });
 
   app.get('/scans/:id', async (request, reply) => {
